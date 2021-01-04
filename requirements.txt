@@ -1,0 +1,5 @@
+requests
+beautifulsoup4
+adafruit-circuitpython-charlcd
+adafruit-blinka
+RPI.GPIO
