@@ -22,27 +22,21 @@ def format_seconds(s):
     return f"{minutes}:{seconds}"
 
 
-def beep_if_needed():
-    if ACTIVE_TIMER:
-        (label, totaltime) = ACTIVE_TIMER
-        s = time.time() - ACTIVE_TIMER_START
-        minutes = math.floor(s / 60)
-        seconds = math.floor(s - (minutes * 60))
-        if seconds == "00":
-            beeps(1, 5)
-            time.sleep(1)
-
-
 def render_timer():
-    global LAST_TIME_TEXT
+    global LAST_TIME_TEXT, LAST_TIME_LABEL
     if ACTIVE_TIMER:
-        LCD.clear()
         (label, totaltime) = ACTIVE_TIMER
         elapsed = time.time() - ACTIVE_TIMER_START
         remaining_str = format_seconds(totaltime - elapsed)
-        if LAST_TIME_TEXT is None or LAST_TIME_TEXT != remaining_str:
-            LAST_TIME_TEXT = remaining_str
+        if LAST_TIME_LABEL is None or LAST_TIME_LABEL != label:
+            LCD.clear()
             LCD.message = f"{label}: {remaining_str}"
+            LAST_TIME_LABEL = label
+        else:
+            LCD.column = len(label) + 2
+            n_spaces = 16 - (len(label) + 2 + len(remaining_str))
+            spaces = "".join(map(lambda _: " ", range(n_spaces)))
+            LCD.message = remaining_str
     elif TIMERS:
         LCD.clear()
         (label, totaltime) = TIMERS[0]
@@ -76,7 +70,8 @@ def setup_timer(timers):
 
 def show_options(tree):
     global ACTIVE_TREE, SELECTED_INDEX, PREVIOUS_TREE_STACK, TIMERS
-    PREVIOUS_TREE_STACK.append((ACTIVE_TREE, SELECTED_INDEX))
+    if ACTIVE_TREE is not None:
+        PREVIOUS_TREE_STACK.append((ACTIVE_TREE, SELECTED_INDEX))
     SELECTED_INDEX = 0
     ACTIVE_TREE = tree
     if ACTIVE_TREE:
@@ -85,7 +80,7 @@ def show_options(tree):
 
 
 def up_one_level():
-    global ACTIVE_TREE, SELECTED_INDEX, PREVIOUS_TREE_STACK, TIMERS, ACTIVE_TIMER, ACTIVE_TIMER_START
+    global ACTIVE_TREE, SELECTED_INDEX, PREVIOUS_TREE_STACK, TIMERS, ACTIVE_TIMER, ACTIVE_TIMER_START, ACTIVE_TIMER_CHECKPOINTS, LAST_TIME_LABEL
     if len(PREVIOUS_TREE_STACK) == 0:
         return
     (tree, index) = PREVIOUS_TREE_STACK.pop(len(PREVIOUS_TREE_STACK) - 1)
@@ -94,6 +89,8 @@ def up_one_level():
     TIMERS = None
     ACTIVE_TIMER = None
     ACTIVE_TIMER_START = None
+    ACTIVE_TIMER_CHECKPOINTS = None
+    LAST_TIME_LABEL = None
     render_page()
 
 
@@ -247,25 +244,34 @@ def handle_select_button(channel):
 
 
 def handle_timer_button(channel):
-    global ACTIVE_TIMER, ACTIVE_TIMER_START, TIMERS
+    global ACTIVE_TIMER, ACTIVE_TIMER_START, TIMERS, ACTIVE_TIMER_CHECKPOINTS, LAST_TIME_LABEL
     if is_timer_start_mode():
         if TIMERS:
             beep(1)
             ACTIVE_TIMER = TIMERS.pop(0)
             ACTIVE_TIMER_START = time.time()
+            ACTIVE_TIMER_CHECKPOINTS = []
+            LAST_TIME_LABEL = None
         else:
             reset_menu()
 
 
 def handle_timer():
-    global ACTIVE_TIMER, ACTIVE_TIMER_START, TIMERS
+    global ACTIVE_TIMER, ACTIVE_TIMER_START, TIMERS, ACTIVE_TIMER_CHECKPOINTS, LAST_TIME_LABEL
     (label, totaltime) = ACTIVE_TIMER
     elapsed = time.time() - ACTIVE_TIMER_START
     if elapsed >= totaltime:
         ACTIVE_TIMER_START = None
         ACTIVE_TIMER = None
+        ACTIVE_TIMER_CHECKPOINTS = None
+        LAST_TIME_LABEL = None
         beep(5)
         return len(TIMERS) > 0
+    else:
+        elapsed_floor = math.floor(elapsed)
+        if (elapsed_floor % 60 == 0 or elapsed_floor % 60 == 10) and elapsed_floor not in ACTIVE_TIMER_CHECKPOINTS:
+            beeps(0.1, 5)
+            ACTIVE_TIMER_CHECKPOINTS.append(elapsed_floor)
     return True
 
 
@@ -281,14 +287,16 @@ def beeps(length, count):
 
 def beep_thread():
     GPIO.setup(BUZZER_CHANNEL, GPIO.OUT)
+    GPIO.output(BUZZER_CHANNEL, 0)
     while True:
         if not BEEP_QUEUE.empty():
             (beep, length) = BEEP_QUEUE.get()
             if beep:
-                GPIO.output(BUZZER_CHANNEL, 1)
+                print("high")
+                # GPIO.output(BUZZER_CHANNEL, 1)
             time.sleep(length)
+            print("low")
             GPIO.output(BUZZER_CHANNEL, 0)
-        time.sleep(0.5)
 
 
 def runloop():
@@ -299,7 +307,6 @@ def runloop():
                 reset_menu()
             else:
                 render_timer()
-        time.sleep(0.5)
 
 
 def reset_menu():
@@ -331,8 +338,9 @@ if __name__ == "__main__":
     TIMERS = None
     ACTIVE_TIMER = None
     ACTIVE_TIMER_START = None
+    ACTIVE_TIMER_CHECKPOINTS = None
     SELECTED_INDEX = 0
-    LAST_TIME_TEXT = None
+    LAST_TIME_LABEL = None
     BEEP_QUEUE = Queue()
 
     GPIO.setmode(GPIO.BCM)
@@ -343,6 +351,6 @@ if __name__ == "__main__":
     Thread(
         target=beep_thread,
         daemon=True,
-    )
+    ).start()
 
     runloop()
